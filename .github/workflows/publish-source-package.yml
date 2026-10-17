@@ -1,0 +1,41 @@
+name: Publish Fork Source Package
+
+on:
+  workflow_dispatch:
+    inputs:
+      ci_run_id:
+        description: Successful Fork Source Package main-push run to promote
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: publish-fork-source-package
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.repository == 'BleedingDev/dom-expressions' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Check promotion regressions
+        run: node --test scripts/publish-source-package.test.mjs
+      # An administrator verifies/enables repository release immutability before
+      # dispatch. Its settings API requires Administration:read, which the job's
+      # GITHUB_TOKEN cannot request. The promoter also verifies the final release
+      # is immutable; mutable releases are never accepted as published output.
+      - name: Publish exact accepted main archives
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_RUN_ID: ${{ inputs.ci_run_id }}
+        run: node scripts/publish-source-package.mjs "$CI_RUN_ID"
