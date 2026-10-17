@@ -133,6 +133,8 @@ function fixture(context) {
   const state = {
     release: undefined,
     assets: new Map(),
+    incomplete: new Set(),
+    injectFinalAsset: false,
     uploads: 0,
     creates: 0,
     edits: 0,
@@ -177,8 +179,17 @@ function fixture(context) {
           }
         });
       if (route.endsWith("/assets?per_page=100"))
-        return JSON.stringify([[...state.assets.keys()].map(name => ({ name }))]);
-      if (route.endsWith("/releases/9")) return JSON.stringify(state.release);
+        return JSON.stringify([
+          [...state.assets.keys()].map(name => ({
+            name,
+            state: state.incomplete.has(name) ? "starter" : "uploaded"
+          }))
+        ]);
+      if (route.endsWith("/releases/9"))
+        return JSON.stringify({
+          ...state.release,
+          assets: [...state.assets.keys()].map(name => ({ name, state: "uploaded" }))
+        });
       if (route.endsWith(`/commits/${tag}`)) return JSON.stringify({ sha });
       assert.fail(`Unexpected API call: ${args}`);
     }
@@ -212,8 +223,15 @@ function fixture(context) {
       writeFileSync(join(args[args.indexOf("--dir") + 1], name), state.assets.get(name));
     } else if (args[1] === "edit") {
       state.edits++;
-      state.release.draft = false;
-      state.release.immutable = !state.mutable;
+      state.release.draft = args.includes("--draft=true");
+      state.release.immutable = !state.release.draft && !state.mutable;
+      if (!state.release.draft && state.injectFinalAsset)
+        state.assets.set("foreign-file", Buffer.from("concurrent upload"));
+    } else if (args[1] === "delete-asset") {
+      assert.equal(state.release.draft, true);
+      assert(state.incomplete.has(args[3]));
+      state.assets.delete(args[3]);
+      state.incomplete.delete(args[3]);
     } else assert.fail(`Unexpected command: ${args}`);
     return "";
   };
@@ -300,10 +318,10 @@ test("rejects mutable releases, foreign tags and unexpected draft assets", async
   f.state.mutable = true;
   await assert.rejects(publishSourcePackage("42", f.commands), /immutability must be enabled/);
   assert.deepEqual(readdirSync(f.temporaryRoot), []);
-  await assert.rejects(
-    publishSourcePackage("42", f.commands),
-    /Published release must be immutable/
-  );
+  assert.equal(f.state.release.draft, true, "A mutable publication is returned to draft");
+  f.state.mutable = false;
+  await publishSourcePackage("42", f.commands);
+  assert.equal(f.state.release.immutable, true);
   f.state.release.draft = true;
   f.state.assets.set("unreviewed.js", Buffer.from("unexpected"));
   await assert.rejects(publishSourcePackage("42", f.commands), /Unexpected release asset/);
@@ -337,4 +355,28 @@ test("refuses a publisher invoked from another repository, event or branch", asy
   ])
     await assert.rejects(publishSourcePackage("42", { ...f.commands, env: { ...env, ...update } }));
   assert.equal(f.state.calls.length, 0);
+});
+
+test("replaces only incomplete draft uploads before resuming", async context => {
+  const f = fixture(context);
+  f.state.failAfterUploads = 1;
+  await assert.rejects(publishSourcePackage("42", f.commands), /upload interrupted/);
+  const [name] = f.state.assets.keys();
+  f.state.incomplete.add(name);
+  f.state.assets.set(name, Buffer.from("partial upload"));
+  f.state.failAfterUploads = Infinity;
+  await publishSourcePackage("42", f.commands);
+  assert.equal(f.state.release.immutable, true);
+  assert.equal(f.state.incomplete.size, 0);
+  assert.deepEqual(f.state.assets.get(name), readFileSync(join(f.accepted, name)));
+});
+
+test("rejects a concurrent foreign asset in the finalized release", async context => {
+  const f = fixture(context);
+  f.state.injectFinalAsset = true;
+  await assert.rejects(
+    publishSourcePackage("42", f.commands),
+    /Finalized release contains unexpected/
+  );
+  assert.equal(f.state.release.immutable, true);
 });

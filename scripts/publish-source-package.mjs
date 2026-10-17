@@ -197,6 +197,12 @@ export async function publishSourcePackage(runId, commands = {}) {
         assert.equal(assets.length, files.length, "Published release is incomplete");
       }
       for (const asset of assets) {
+        if (asset.state !== "uploaded") {
+          assert(release.draft, "Published release contains an incomplete asset");
+          await gh("release", "delete-asset", tag, asset.name, "--repo", repository, "--yes");
+          release.assets = release.assets.filter(candidate => candidate.name !== asset.name);
+          continue;
+        }
         await gh(
           "release",
           "download",
@@ -249,10 +255,18 @@ export async function publishSourcePackage(runId, commands = {}) {
     await gh("release", "edit", tag, "--repo", repository, "--draft=false", "--latest=false");
     const finalized = await api(`repos/${repository}/releases/${release.id}`);
     assert.equal(finalized.draft, false);
-    assert.equal(
-      finalized.immutable,
-      true,
-      "Release immutability must be enabled before promotion"
+    if (finalized.immutable !== true) {
+      await gh("release", "edit", tag, "--repo", repository, "--draft=true");
+      assert.fail("Release immutability must be enabled before promotion");
+    }
+    assert.deepEqual(
+      finalized.assets.map(asset => asset.name).sort(),
+      [...files].sort(),
+      "Finalized release contains unexpected or missing assets"
+    );
+    assert(
+      finalized.assets.every(asset => asset.state === "uploaded"),
+      "Finalized release contains an incomplete asset"
     );
     assert.equal(
       (await api(`repos/${repository}/commits/${tag}`)).sha,
