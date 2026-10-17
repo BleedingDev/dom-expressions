@@ -23,10 +23,24 @@ function fixture() {
 }
 
 test("accepts the complete source package and preserves its native identity", () => {
-  assert.deepEqual(validateSourcePackage(fixture().options), {
+  const { archive, options } = fixture();
+  for (const path of ["README.md", "LICENSE"]) {
+    archive.set(`package/${path}`, "Package documentation");
+    options.entries.push(`package/${path}`);
+  }
+  assert.deepEqual(validateSourcePackage(options), {
     name: "dom-expressions",
     version: "0.40.12"
   });
+});
+
+test("rejects extra executable files outside the reviewed runtime source directory", () => {
+  for (const path of ["package/index.js", "package/dist/server.js"]) {
+    const { archive, options } = fixture();
+    archive.set(path, "throw new Error('unreviewed executable');");
+    options.entries.push(path);
+    assert.throws(() => validateSourcePackage(options), /Unexpected archive file/);
+  }
 });
 
 test("rejects altered, missing and unexpected packaged runtime source", () => {

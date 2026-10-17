@@ -7,6 +7,7 @@ import { isDeepStrictEqual } from "node:util";
 
 const packagePath = "packages/dom-expressions";
 const repository = "BleedingDev/dom-expressions";
+const allowedRootFiles = new Set(["package/package.json", "package/README.md", "package/LICENSE"]);
 const command = (executable, args) =>
   execFileSync(executable, args, { maxBuffer: 16 * 1024 * 1024 });
 
@@ -19,6 +20,11 @@ export function validateSourcePackage({ entries, readEntry, sourcePaths, readSou
       entry.split("/").some(part => part === ".." || part === ".")
     ) {
       throw new Error(`Unsafe archive entry: ${entry}`);
+    }
+  }
+  for (const file of files) {
+    if (!file.startsWith("package/src/") && !allowedRootFiles.has(file)) {
+      throw new Error(`Unexpected archive file: ${file}`);
     }
   }
   const manifest = JSON.parse(readEntry("package/package.json"));
