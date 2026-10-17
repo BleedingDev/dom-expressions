@@ -1,0 +1,50 @@
+name: Fork Source Package
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-source-package-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  accept-source-package:
+    if: github.repository == 'BleedingDev/dom-expressions'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.1.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Check archive acceptance
+        run: node --test scripts/accept-source-package.test.mjs
+      - name: Install native dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build native packages
+        run: pnpm run build
+      - name: Run native tests
+        run: pnpm run test
+      - name: Pack and accept exact source
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/dom-source-package"
+          pnpm --dir packages/dom-expressions pack --pack-destination "$RUNNER_TEMP/dom-source-package"
+          node scripts/accept-source-package.mjs "$RUNNER_TEMP/dom-source-package"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dom-expressions-source-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dom-source-package/
+          if-no-files-found: error
+          retention-days: 14
